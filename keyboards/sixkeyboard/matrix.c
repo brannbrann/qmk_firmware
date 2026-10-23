@@ -1,10 +1,5 @@
 /*
 
-Note for ErgoDox EZ customizers: Here be dragons!
-This is not a file you want to be messing with.
-All of the interesting stuff for you is under keymaps/ :)
-Love, Erez
-
 Copyright 2013 Oleg Kostyuk <cub.uanic@gmail.com>
 
 This program is free software: you can redistribute it and/or modify
@@ -33,10 +28,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "debug.h"
 #include "util.h"
 #include "matrix.h"
-#include "sixkeyboard.h"
+#include "timer.h"
+#include <string.h>
 
 /* matrix state(1:on, 0:off) */
 static matrix_row_t matrix[MATRIX_ROWS];
+static matrix_row_t matrix_stage[MATRIX_ROWS];
+static matrix_row_t matrix_debouncing[MATRIX_ROWS];
+
+static uint16_t debouncing_time;
+static bool debouncing = false;
 
 __attribute__ ((weak))
 void matrix_init_kb(void) {
@@ -70,13 +71,18 @@ uint8_t matrix_cols(void)
 
 void matrix_init(void)
 {
+    gpio_set_pin_input_high(C7);
+    gpio_set_pin_input_high(B5);
+    gpio_set_pin_input_high(B7);
+    gpio_set_pin_input_high(D1);
+    gpio_set_pin_input_high(D4);
+    gpio_set_pin_input_high(D6);
 
-    DDRC  &= ~(1<<7);
-    PORTC |=  (1<<7);
-    DDRB  &= ~(1<<7 | 1<<5);
-    PORTB |=  (1<<7 | 1<<5);
-    DDRD  &= ~(1<<6 | 1<<4 | 1<<1);
-    PORTD |=  (1<<6 | 1<<4 | 1<<1);
+    for (uint8_t i=0; i < MATRIX_ROWS; i++) {
+        matrix[i] = 0;
+        matrix_debouncing[i] = 0;
+        matrix_stage[i] = 0;
+    }
 
     matrix_init_kb();
 
@@ -84,17 +90,27 @@ void matrix_init(void)
 
 uint8_t matrix_scan(void)
 {
-    matrix[0] = (PINC&(1<<7) ? 0 : (1<<0)) | (PINB&(1<<7) ? 0 : (1<<1)) | (PINB&(1<<5) ? 0 : (1<<2));
-    matrix[1] = (PIND&(1<<6) ? 0 : (1<<0)) | (PIND&(1<<1) ? 0 : (1<<1)) | (PIND&(1<<4) ? 0 : (1<<2));
+    matrix_stage[0] = (PINC&(1<<7) ? 0 : (1<<0)) | (PINB&(1<<7) ? 0 : (1<<1)) | (PINB&(1<<5) ? 0 : (1<<2));
+    matrix_stage[1] = (PIND&(1<<6) ? 0 : (1<<0)) | (PIND&(1<<1) ? 0 : (1<<1)) | (PIND&(1<<4) ? 0 : (1<<2));
 
-    matrix_scan_quantum();
+    if (memcmp(matrix_debouncing, matrix_stage, sizeof(matrix)) != 0) {
+        debouncing = true;
+        debouncing_time = timer_read();
+    }
+
+    matrix_debouncing[0] = matrix_stage[0];
+    matrix_debouncing[1] = matrix_stage[1];
+
+    if (debouncing && (timer_elapsed(debouncing_time) > 20)) {
+        for (uint8_t i = 0; i < MATRIX_ROWS; i++) {
+            matrix[i] = matrix_debouncing[i];
+        }
+        debouncing = false;
+    }
+
+    matrix_scan_kb();
 
     return 1;
-}
-
-bool matrix_is_modified(void)
-{
-    return true;
 }
 
 inline
@@ -111,20 +127,4 @@ matrix_row_t matrix_get_row(uint8_t row)
 
 void matrix_print(void)
 {
-    print("\nr/c 0123456789ABCDEF\n");
-    for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
-        phex(row); print(": ");
-        pbin_reverse16(matrix_get_row(row));
-        print("\n");
-    }
 }
-
-uint8_t matrix_key_count(void)
-{
-    uint8_t count = 0;
-    for (uint8_t i = 0; i < MATRIX_ROWS; i++) {
-        count += bitpop16(matrix[i]);
-    }
-    return count;
-}
-
